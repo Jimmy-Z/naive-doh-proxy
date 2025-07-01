@@ -5,21 +5,21 @@ use std::{
 };
 
 use clap::Parser;
-use http::HeaderValue;
+use http::{HeaderMap, HeaderValue};
 use log::*;
 
 use tokio::{net::UdpSocket, task};
 
-// reason for this is to make the ? shorthand work
+// reason for this is to make the ? short circuit work
 // actual error handling is done locally in map_err
 type Result = std::result::Result<(), ()>;
 
-const UA: HeaderValue = HeaderValue::from_static("Naive DoH Proxy");
+const USER_AGENT: HeaderValue = HeaderValue::from_static("Naive DoH Proxy");
 const APP_DNS_MSG: HeaderValue = HeaderValue::from_static("application/dns-message");
 
 #[derive(clap::Parser)]
 struct Args {
-	#[clap(short, long, default_value = "127.0.0.1:1053")]
+	#[clap(short = 'l', long, default_value = "127.0.0.1:1053")]
 	pub dns_listen: String,
 
 	#[clap(short, long, default_value = "cloudflare-dns.com")]
@@ -48,32 +48,36 @@ async fn main() -> Result {
 	env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(DEFAULT_LOG_LEVEL))
 		.init();
 
-	let addr = a.dns_listen.parse::<SocketAddr>().map_err(|e| {
-		error!("failed to parse address \"{}\": {}", a.dns_listen, e);
-		()
-	})?;
-	trace!("trying to listen on {}", addr);
-	let s = UdpSocket::bind(addr).await.map_err(|e| {
-		error!("failed to bind address {}: {}", addr, e);
-		()
-	})?;
-	info!(
-		"listening on {}",
-		s.local_addr().map_err(|e| {
-			error!("failed to get local address from socket: {}", e);
-			()
-		})?
-	);
+	let addr: SocketAddr = a
+		.dns_listen
+		.parse()
+		.map_err(|e| error!("failed to parse address \"{}\": {}", a.dns_listen, e))?;
+	debug!("trying to listen on {}", addr);
+	let s = UdpSocket::bind(addr)
+		.await
+		.map_err(|e| error!("failed to bind address {}: {}", addr, e))?;
+	// I wonder how could this fail though
+	match s.local_addr() {
+		Ok(a) => info!("listening on {}", a.to_string()),
+		Err(e) => error!("failed to get local address from listening socket: {}", e),
+	}
+
+	let mut headers = HeaderMap::new();
+	headers.insert(http::header::USER_AGENT, USER_AGENT);
+	headers.insert(http::header::ACCEPT, APP_DNS_MSG);
+	headers.insert(http::header::CONTENT_TYPE, APP_DNS_MSG);
 
 	let mut c = reqwest::ClientBuilder::new()
+		.min_tls_version(reqwest::tls::Version::TLS_1_2)
+		.connect_timeout(Duration::from_millis(2501))
+		.read_timeout(Duration::from_millis(2501))
+		.tcp_user_timeout(Duration::from_millis(2501))
+		.default_headers(headers)
+		.no_hickory_dns()
 		.no_gzip()
 		.no_deflate()
 		.no_brotli()
-		.no_zstd()
-		.no_hickory_dns()
-		.connect_timeout(Duration::from_secs(3))
-		.read_timeout(Duration::from_secs(3))
-		.min_tls_version(reqwest::tls::Version::TLS_1_2);
+		.no_zstd();
 
 	if a.upstream_addr.len() > 0 {
 		let upstream_addrs: Vec<SocketAddr> = a
@@ -81,10 +85,7 @@ async fn main() -> Result {
 			.split(',')
 			.filter_map(|a| {
 				a.parse::<IpAddr>()
-					.map_err(|e| {
-						error!("failed to parse address \"{}\": {}", a, e);
-						()
-					})
+					.map_err(|e| error!("failed to parse address \"{}\": {}", a, e))
 					.ok()
 			})
 			.map(|ip_addr| SocketAddr::new(ip_addr, a.upstream_port))
@@ -96,10 +97,9 @@ async fn main() -> Result {
 		}
 	}
 
-	let c = c.build().map_err(|e| {
-		error!("failed to build reqwest client: {}", e);
-		()
-	})?;
+	let c = c
+		.build()
+		.map_err(|e| error!("failed to build reqwest client: {}", e))?;
 
 	// localSet to allow !Send in async
 	let local = task::LocalSet::new();
@@ -115,7 +115,7 @@ async fn naive(a: Args, c: reqwest::Client, s: UdpSocket) {
 
 	let mut buf = vec![0u8; 0x600];
 
-	// to do: graceful shutdown
+	// to do: graceful shutdown?
 	loop {
 		let r = s.recv_from(&mut buf).await;
 		match r {
@@ -136,6 +136,7 @@ async fn naive(a: Args, c: reqwest::Client, s: UdpSocket) {
 	}
 }
 
+// to do: respond with error instead of let the client hanging
 async fn fire(
 	a: Rc<Args>,
 	c: reqwest::Client,
@@ -148,17 +149,11 @@ async fn fire(
 			reqwest::Method::POST,
 			format!("https://{}{}", a.upstream_host, a.upstream_path),
 		)
-		.header(http::header::USER_AGENT, UA)
-		.header(http::header::ACCEPT, APP_DNS_MSG)
-		.header(http::header::CONTENT_TYPE, APP_DNS_MSG)
 		.header(http::header::CONTENT_LENGTH, msg.len())
 		.body(msg)
 		.send()
 		.await
-		.map_err(|e| {
-			warn!("failed to send request: {}", e);
-			()
-		})?;
+		.map_err(|e| warn!("failed to send request: {}", e))?;
 	let status = res.status();
 	#[cfg(debug_assertions)]
 	for (n, v) in res.headers() {
@@ -166,21 +161,23 @@ async fn fire(
 	}
 	if status != http::StatusCode::OK {
 		warn!("upstream returned {}:", status);
-		let text = res.text().await.map_err(|e| {
-			warn!("\n failed to decoding text from upstream: {}", e);
-			()
-		})?;
+		let text = res
+			.text()
+			.await
+			.map_err(|e| warn!("\n failed to decoding text from upstream: {}", e))?;
 		warn!("\t{}\n", text);
 		return Err(());
 	}
 
-	let msg = res.bytes().await.map_err(|e| {
-		warn!("error receiving DNS response from upstream: {}", e);
-	})?;
+	let msg = res
+		.bytes()
+		.await
+		.map_err(|e| warn!("error receiving DNS response from upstream: {}", e))?;
 
-	s.send_to(&msg, addr).await.map_err(|e| {
-		warn!("error sending DNS response back to {}: {}", addr, e);
-	})?;
+	info!("received {} bytes from upstream, sending it back to {}", msg.len(), addr);
+	s.send_to(&msg, addr)
+		.await
+		.map_err(|e| warn!("error sending DNS response back to {}: {}", addr, e))?;
 
 	Ok(())
 }

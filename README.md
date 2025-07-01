@@ -7,4 +7,5 @@ and treat it as a black box.
 * HTTPS is handled by reqwest.
 
 ### why?
-since lots of tools doesn't support DoH.
+* since lots of tools doesn't support DoH.
+* dig requires HTTP/2, naive doesn't enforce this.
