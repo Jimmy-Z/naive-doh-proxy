@@ -109,7 +109,7 @@ async fn main() -> Result {
 
 const RCV_BUF_LEN: usize = 0x600;
 
-async fn naive(u: Url, c: reqwest::Client, s: UdpSocket) {
+async fn naive(url: Url, c: reqwest::Client, s: UdpSocket) {
 	let s = Rc::new(s);
 
 	let mut buf = BytesMut::with_capacity(RCV_BUF_LEN);
@@ -119,11 +119,11 @@ async fn naive(u: Url, c: reqwest::Client, s: UdpSocket) {
 		let r = s.recv_buf_from(&mut buf).await;
 		match r {
 			Ok((len, addr)) => {
-				let msg: Bytes = buf.into();
-				// debug!("msg len: {}", msg.len());
 				info!("received {} bytes from {}", len, addr);
+				let msg = buf.freeze();
+				debug!("recv len: {}, msg len: {}", len, msg.len());
 				task::spawn_local(fire(
-					u.clone(),
+					url.clone(),
 					c.clone(),
 					s.clone(),
 					addr,
@@ -140,14 +140,14 @@ async fn naive(u: Url, c: reqwest::Client, s: UdpSocket) {
 
 // to do: respond with error instead of let the client hanging
 async fn fire(
-	u: Url,
+	url: Url,
 	c: reqwest::Client,
 	s: Rc<UdpSocket>,
 	addr: SocketAddr,
 	msg: Bytes,
 ) -> Result {
 	let res = c
-		.request(reqwest::Method::POST, u)
+		.request(reqwest::Method::POST, url)
 		.header(http::header::CONTENT_LENGTH, msg.len())
 		.body(msg)
 		.send()
