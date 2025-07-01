@@ -1,0 +1,21 @@
+[package]
+name = "naive-doh-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ndoh"
+path = "src/main.rs"
+
+[dependencies]
+log = { version = "*", features = ["release_max_level_info"] }
+env_logger = "*"
+clap = { version = "*", features = ["derive"] }
+
+http = "1"
+tokio = { version = "1", features = ["macros", "rt", "net"] }
+reqwest = { version = "*", default-features = false, features = [
+	"native-tls",
+	"native-tls-alpn",
+	"http2",
+] }
