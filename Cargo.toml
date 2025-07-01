@@ -13,7 +13,8 @@ env_logger = "*"
 clap = { version = "*", features = ["derive"] }
 
 http = "1"
-tokio = { version = "1", features = ["macros", "rt", "net"] }
+bytes = "1"
+tokio = { version = "1", features = ["macros", "rt", "net", "io-util"] }
 reqwest = { version = "*", default-features = false, features = [
 	"native-tls",
 	"native-tls-alpn",

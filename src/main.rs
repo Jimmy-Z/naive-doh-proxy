@@ -1,12 +1,12 @@
 use std::{
-	net::{IpAddr, SocketAddr},
-	rc::Rc,
-	time::Duration,
+	net::{IpAddr, SocketAddr}, rc::Rc, time::Duration
 };
 
+use bytes::{Bytes, BytesMut};
 use clap::Parser;
 use http::{HeaderMap, HeaderValue};
 use log::*;
+use reqwest::Url;
 
 use tokio::{net::UdpSocket, task};
 
@@ -22,18 +22,12 @@ struct Args {
 	#[clap(short = 'l', long, default_value = "127.0.0.1:1053")]
 	pub dns_listen: String,
 
-	#[clap(short, long, default_value = "cloudflare-dns.com")]
-	pub upstream_host: String,
+	#[clap(short, long, default_value = "https://cloudflare-dns.com/dns-query")]
+	pub upstream: String,
 
 	/// set to "" to let reqwest handle bootstrap resolving
 	#[clap(short = 'a', long, default_value = "1.1.1.1,1.0.0.1")]
 	pub upstream_addr: String,
-
-	#[clap(long, default_value_t = 443)]
-	pub upstream_port: u16,
-
-	#[clap(long, default_value = "/dns-query")]
-	pub upstream_path: String,
 }
 
 #[cfg(debug_assertions)]
@@ -79,6 +73,10 @@ async fn main() -> Result {
 		.no_brotli()
 		.no_zstd();
 
+	let url = Url::parse(&a.upstream)
+		.map_err(|e| warn!("failed to parse \"{}\": {}", &a.upstream, e))?;
+	let host = url.host_str().unwrap();
+
 	if a.upstream_addr.len() > 0 {
 		let upstream_addrs: Vec<SocketAddr> = a
 			.upstream_addr
@@ -88,10 +86,10 @@ async fn main() -> Result {
 					.map_err(|e| error!("failed to parse address \"{}\": {}", a, e))
 					.ok()
 			})
-			.map(|ip_addr| SocketAddr::new(ip_addr, a.upstream_port))
+			.map(|ip_addr| SocketAddr::new(ip_addr, 0))
 			.collect();
 		if upstream_addrs.len() > 0 {
-			c = c.resolve_to_addrs(&a.upstream_host, &upstream_addrs);
+			c = c.resolve_to_addrs(host, &upstream_addrs);
 		} else {
 			warn!("fallback to use system DNS to handle bootstrapping");
 		}
@@ -103,31 +101,35 @@ async fn main() -> Result {
 
 	// localSet to allow !Send in async
 	let local = task::LocalSet::new();
-	local.run_until(naive(a, c, s)).await;
+	local.run_until(naive(url, c, s)).await;
 	local.await;
 
 	Ok(())
 }
 
-async fn naive(a: Args, c: reqwest::Client, s: UdpSocket) {
-	let a = Rc::new(a);
+const RCV_BUF_LEN: usize = 0x600;
+
+async fn naive(u: Url, c: reqwest::Client, s: UdpSocket) {
 	let s = Rc::new(s);
 
-	let mut buf = vec![0u8; 0x600];
+	let mut buf = BytesMut::with_capacity(RCV_BUF_LEN);
 
 	// to do: graceful shutdown?
 	loop {
-		let r = s.recv_from(&mut buf).await;
+		let r = s.recv_buf_from(&mut buf).await;
 		match r {
 			Ok((len, addr)) => {
+				let msg: Bytes = buf.into();
+				// debug!("msg len: {}", msg.len());
 				info!("received {} bytes from {}", len, addr);
 				task::spawn_local(fire(
-					a.clone(),
+					u.clone(),
 					c.clone(),
 					s.clone(),
 					addr,
-					buf[..len].to_vec(),
+					msg,
 				));
+				buf = BytesMut::with_capacity(RCV_BUF_LEN);
 			}
 			Err(e) => {
 				warn!("udp recv err: {}", e);
@@ -138,17 +140,14 @@ async fn naive(a: Args, c: reqwest::Client, s: UdpSocket) {
 
 // to do: respond with error instead of let the client hanging
 async fn fire(
-	a: Rc<Args>,
+	u: Url,
 	c: reqwest::Client,
 	s: Rc<UdpSocket>,
 	addr: SocketAddr,
-	msg: Vec<u8>,
+	msg: Bytes,
 ) -> Result {
 	let res = c
-		.request(
-			reqwest::Method::POST,
-			format!("https://{}{}", a.upstream_host, a.upstream_path),
-		)
+		.request(reqwest::Method::POST, u)
 		.header(http::header::CONTENT_LENGTH, msg.len())
 		.body(msg)
 		.send()
@@ -174,7 +173,11 @@ async fn fire(
 		.await
 		.map_err(|e| warn!("error receiving DNS response from upstream: {}", e))?;
 
-	info!("received {} bytes from upstream, sending it back to {}", msg.len(), addr);
+	info!(
+		"received {} bytes from upstream, sending it back to {}",
+		msg.len(),
+		addr
+	);
 	s.send_to(&msg, addr)
 		.await
 		.map_err(|e| warn!("error sending DNS response back to {}: {}", addr, e))?;
