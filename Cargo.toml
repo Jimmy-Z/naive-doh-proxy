@@ -19,3 +19,6 @@ reqwest = { version = "*", default-features = false, features = [
 	"native-tls",
 	"http2",
 ] }
+
+[build-dependencies]
+utils = {git = "https://github.com/Jimmy-Z/tater", package = "utils"}

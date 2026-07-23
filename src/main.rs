@@ -20,6 +20,7 @@ const USER_AGENT: HeaderValue = HeaderValue::from_static("Naive DoH Proxy");
 const APP_DNS_MSG: HeaderValue = HeaderValue::from_static("application/dns-message");
 
 #[derive(clap::Parser)]
+#[command(version = env!("REV"))]
 struct Args {
 	#[clap(short = 'l', long, default_value = "127.0.0.1:1053")]
 	pub dns_listen: String,
