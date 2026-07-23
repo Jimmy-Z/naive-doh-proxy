@@ -1,5 +1,7 @@
 use std::{
-	net::{IpAddr, SocketAddr}, rc::Rc, time::Duration
+	net::{IpAddr, SocketAddr},
+	rc::Rc,
+	time::Duration,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -52,7 +54,7 @@ async fn main() -> Result {
 		.map_err(|e| error!("failed to bind address {}: {}", addr, e))?;
 	// I wonder how could this fail though
 	match s.local_addr() {
-		Ok(a) => info!("listening on {}", a.to_string()),
+		Ok(a) => info!("listening on {}", a),
 		Err(e) => error!("failed to get local address from listening socket: {}", e),
 	}
 
@@ -65,7 +67,7 @@ async fn main() -> Result {
 		.min_tls_version(reqwest::tls::Version::TLS_1_2)
 		.connect_timeout(Duration::from_millis(2501))
 		.read_timeout(Duration::from_millis(2501))
-		.tcp_user_timeout(Duration::from_millis(2501))
+		// .tcp_user_timeout(Duration::from_millis(2501))
 		.default_headers(headers)
 		.no_hickory_dns()
 		.no_gzip()
@@ -73,11 +75,11 @@ async fn main() -> Result {
 		.no_brotli()
 		.no_zstd();
 
-	let url = Url::parse(&a.upstream)
-		.map_err(|e| warn!("failed to parse \"{}\": {}", &a.upstream, e))?;
+	let url =
+		Url::parse(&a.upstream).map_err(|e| warn!("failed to parse \"{}\": {}", a.upstream, e))?;
 	let host = url.host_str().unwrap();
 
-	if a.upstream_addr.len() > 0 {
+	if !a.upstream_addr.is_empty() {
 		let upstream_addrs: Vec<SocketAddr> = a
 			.upstream_addr
 			.split(',')
@@ -88,7 +90,7 @@ async fn main() -> Result {
 			})
 			.map(|ip_addr| SocketAddr::new(ip_addr, 0))
 			.collect();
-		if upstream_addrs.len() > 0 {
+		if !upstream_addrs.is_empty() {
 			c = c.resolve_to_addrs(host, &upstream_addrs);
 		} else {
 			warn!("fallback to use system DNS to handle bootstrapping");
@@ -122,13 +124,7 @@ async fn naive(url: Url, c: reqwest::Client, s: UdpSocket) {
 				info!("received {} bytes from {}", len, addr);
 				let msg = buf.freeze();
 				debug!("recv len: {}, msg len: {}", len, msg.len());
-				task::spawn_local(fire(
-					url.clone(),
-					c.clone(),
-					s.clone(),
-					addr,
-					msg,
-				));
+				task::spawn_local(fire(url.clone(), c.clone(), s.clone(), addr, msg));
 				buf = BytesMut::with_capacity(RCV_BUF_LEN);
 			}
 			Err(e) => {
@@ -156,7 +152,7 @@ async fn fire(
 	let status = res.status();
 	#[cfg(debug_assertions)]
 	for (n, v) in res.headers() {
-		trace!("header dump - {}: {}", n.to_string(), v.to_str().unwrap());
+		trace!("header dump - {}: {}", n, v.to_str().unwrap());
 	}
 	if status != http::StatusCode::OK {
 		warn!("upstream returned {}:", status);
