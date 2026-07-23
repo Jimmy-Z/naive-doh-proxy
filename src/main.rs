@@ -67,13 +67,17 @@ async fn main() -> Result {
 		.min_tls_version(reqwest::tls::Version::TLS_1_2)
 		.connect_timeout(Duration::from_millis(2501))
 		.read_timeout(Duration::from_millis(2501))
-		// .tcp_user_timeout(Duration::from_millis(2501))
 		.default_headers(headers)
 		.no_hickory_dns()
 		.no_gzip()
 		.no_deflate()
 		.no_brotli()
 		.no_zstd();
+
+	#[cfg(any(target_os = "linux", target_os = "android"))]
+	{
+		c = c.tcp_user_timeout(Duration::from_millis(2501));
+	}
 
 	let url =
 		Url::parse(&a.upstream).map_err(|e| warn!("failed to parse \"{}\": {}", a.upstream, e))?;
