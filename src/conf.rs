@@ -1,4 +1,5 @@
 use std::{
+	fmt::Display,
 	net::{IpAddr, SocketAddr},
 	str::FromStr as _,
 	time::Duration,
@@ -47,6 +48,7 @@ pub struct Conf {
 	bind_addr: Option<IpAddr>,
 	bind_interface: String,
 	timeout: Duration,
+	pub poll_interval: Duration,
 }
 
 impl TryFrom<Args> for Conf {
@@ -88,6 +90,7 @@ impl TryFrom<Args> for Conf {
 			bind_addr,
 			bind_interface: args.bind_interface,
 			timeout: Duration::from_millis(args.timeout as u64),
+			poll_interval: Duration::from_secs(args.poll_interval as u64),
 		})
 	}
 }
@@ -109,6 +112,10 @@ impl Conf {
 			b = b.tcp_user_timeout(self.timeout);
 		}
 		if !self.addrs.is_empty() {
+			info!(
+				"using address: {}",
+				Pretty(self.addrs.iter().map(SocketAddr::ip), ' ')
+			);
 			b = b.resolve_to_addrs(self.url.host_str().unwrap(), &self.addrs);
 		}
 		if let Some(a) = self.bind_addr {
@@ -120,5 +127,27 @@ impl Conf {
 
 		b.build()
 			.map_err(|e| error!("failed to build reqwest client: {e}"))
+	}
+}
+
+struct Pretty<T, S>(T, S);
+
+impl<T: Clone, S: Display + Copy, E: Display> Display for Pretty<T, S>
+where
+	T: IntoIterator<Item = E>,
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		// clone here is unavoidable since iterator adapters are consuming
+		// while Display::fmt takes &self
+		// for things like &[] or &Vec, they're copy anyway
+		// just don't give it things like Vec
+		let mut iter = self.0.clone().into_iter();
+		if let Some(e) = iter.next() {
+			write!(f, "{e}")?;
+			for e in iter {
+				write!(f, "{}{e}", self.1)?;
+			}
+		}
+		Ok(())
 	}
 }

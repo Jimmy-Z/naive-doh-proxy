@@ -3,13 +3,13 @@ use std::{net::SocketAddr, rc::Rc};
 use bytes::{Bytes, BytesMut};
 use log::*;
 use reqwest::Url;
-use tokio::{net::UdpSocket, task};
+use tokio::{net::UdpSocket, task, time::interval};
 
 use super::Conf;
 
 // reason for this is to make the ? short circuit work
 // actual error handling is done locally in map_err
-pub type Dummy = std::result::Result<(), ()>;
+pub type Dummy = Result<(), ()>;
 
 const RCV_BUF_LEN: usize = 0x600;
 
@@ -19,19 +19,27 @@ pub async fn naive(conf: Conf, s: UdpSocket) -> Dummy {
 
 	let mut buf = BytesMut::with_capacity(RCV_BUF_LEN);
 
+	let mut poll = interval(conf.poll_interval);
+
 	// to do: graceful shutdown?
 	loop {
-		let r = s.recv_buf_from(&mut buf).await;
-		match r {
-			Ok((len, addr)) => {
-				info!("received {} bytes from {}", len, addr);
-				let msg = buf.freeze();
-				debug!("recv len: {}, msg len: {}", len, msg.len());
-				task::spawn_local(proxy(conf.url.clone(), client.clone(), s.clone(), addr, msg));
-				buf = BytesMut::with_capacity(RCV_BUF_LEN);
+		tokio::select! {
+			_ = poll.tick() => {
+				debug!("poll tick");
 			}
-			Err(e) => {
-				warn!("udp recv err: {}", e);
+			r = s.recv_buf_from(&mut buf) => {
+				match r {
+					Ok((len, addr)) => {
+						debug!("received {} bytes from {}", len, addr);
+						let msg = buf.freeze();
+						trace!("recv len: {}, msg len: {}", len, msg.len());
+						task::spawn_local(proxy(conf.url.clone(), client.clone(), s.clone(), addr, msg));
+						buf = BytesMut::with_capacity(RCV_BUF_LEN);
+					}
+					Err(e) => {
+						warn!("udp recv err: {}", e);
+					}
+				}
 			}
 		}
 	}
@@ -60,8 +68,7 @@ async fn exchange(url: Url, c: reqwest::Client, msg: Bytes) -> Result<Bytes, ()>
 		return Err(());
 	}
 
-	res
-		.bytes()
+	res.bytes()
 		.await
 		.map_err(|e| warn!("error receiving DNS response from upstream: {}", e))
 }
