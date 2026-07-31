@@ -17,7 +17,7 @@ pub struct Args {
 	#[clap(short, long, default_value = "https://cloudflare-dns.com/dns-query")]
 	pub upstream: String,
 
-	/// set to "" to let reqwest handle bootstrap resolving
+	/// set to "" to use system resolver for bootstrap resolving
 	#[clap(short = 'a', long, default_value = "1.1.1.1,1.0.0.1")]
 	pub upstream_addr: String,
 

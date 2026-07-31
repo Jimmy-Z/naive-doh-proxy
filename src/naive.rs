@@ -7,14 +7,13 @@ use tokio::{net::UdpSocket, task};
 
 use super::Conf;
 
-
 // reason for this is to make the ? short circuit work
 // actual error handling is done locally in map_err
-pub type Result = std::result::Result<(), ()>;
+pub type Dummy = std::result::Result<(), ()>;
 
 const RCV_BUF_LEN: usize = 0x600;
 
-pub async fn naive(conf: Conf, s: UdpSocket) -> Result {
+pub async fn naive(conf: Conf, s: UdpSocket) -> Dummy {
 	let s = Rc::new(s);
 	let client = conf.build()?;
 
@@ -28,7 +27,7 @@ pub async fn naive(conf: Conf, s: UdpSocket) -> Result {
 				info!("received {} bytes from {}", len, addr);
 				let msg = buf.freeze();
 				debug!("recv len: {}, msg len: {}", len, msg.len());
-				task::spawn_local(fire(conf.url.clone(), client.clone(), s.clone(), addr, msg));
+				task::spawn_local(proxy(conf.url.clone(), client.clone(), s.clone(), addr, msg));
 				buf = BytesMut::with_capacity(RCV_BUF_LEN);
 			}
 			Err(e) => {
@@ -38,14 +37,7 @@ pub async fn naive(conf: Conf, s: UdpSocket) -> Result {
 	}
 }
 
-// to do: respond with error instead of let the client hanging
-async fn fire(
-	url: Url,
-	c: reqwest::Client,
-	s: Rc<UdpSocket>,
-	addr: SocketAddr,
-	msg: Bytes,
-) -> Result {
+async fn exchange(url: Url, c: reqwest::Client, msg: Bytes) -> Result<Bytes, ()> {
 	let res = c
 		.request(reqwest::Method::POST, url)
 		.header(http::header::CONTENT_LENGTH, msg.len())
@@ -68,10 +60,21 @@ async fn fire(
 		return Err(());
 	}
 
-	let msg = res
+	res
 		.bytes()
 		.await
-		.map_err(|e| warn!("error receiving DNS response from upstream: {}", e))?;
+		.map_err(|e| warn!("error receiving DNS response from upstream: {}", e))
+}
+
+// to do: respond with error instead of let the client hanging
+async fn proxy(
+	url: Url,
+	c: reqwest::Client,
+	s: Rc<UdpSocket>,
+	addr: SocketAddr,
+	msg: Bytes,
+) -> Dummy {
+	let msg = exchange(url, c, msg).await?;
 
 	info!(
 		"received {} bytes from upstream, sending it back to {}",

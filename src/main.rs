@@ -18,7 +18,7 @@ const DEFAULT_LOG_LEVEL: &str = "debug";
 const DEFAULT_LOG_LEVEL: &str = "info";
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result {
+async fn main() -> Dummy {
 	let args = conf::Args::parse();
 
 	env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(DEFAULT_LOG_LEVEL))
