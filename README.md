@@ -8,4 +8,7 @@ and treat it as a black box.
 
 ### why?
 * since lots of tools doesn't support DoH.
+	* there's https-dns-proxy, used in openwrt, but not packaged for debian
+		* naive is probably not better than it
+	* there's dnscrypt-proxy, but it's go
 * dig requires HTTP/2, naive doesn't enforce this.

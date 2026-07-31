@@ -21,4 +21,8 @@ reqwest = { version = "*", default-features = false, features = [
 ] }
 
 [build-dependencies]
-utils = {git = "https://github.com/Jimmy-Z/tater", package = "utils"}
+misc = { git = "https://github.com/Jimmy-Z/misc" }
+
+[profile.release]
+lto = true
+strip = true

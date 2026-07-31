@@ -1,3 +1,3 @@
 fn main() {
-	utils::comp_time_env_rev(&["tokio", "reqwest"]);
+	misc::comp_time_env_rev(&["tokio", "reqwest"]);
 }
